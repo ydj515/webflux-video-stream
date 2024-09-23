@@ -1,13 +1,18 @@
 package kr.co.promptech.webfluxdemo
 
+import com.mongodb.client.gridfs.model.GridFSFile
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.core.io.ByteArrayResource
 import org.springframework.core.io.InputStreamResource
 import org.springframework.core.io.Resource
 import org.springframework.core.io.ResourceLoader
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DataBufferUtils
-import org.springframework.data.mongodb.gridfs.GridFsTemplate
-import org.springframework.http.MediaType
+import org.springframework.data.mongodb.core.query.Criteria.where
+import org.springframework.data.mongodb.core.query.Query
+import org.springframework.data.mongodb.core.query.Query.query
+import org.springframework.data.mongodb.gridfs.ReactiveGridFsOperations
+import org.springframework.data.mongodb.gridfs.ReactiveGridFsTemplate
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -18,39 +23,62 @@ import java.io.InputStream
 @Service
 class StreamingService(
     @Qualifier("webApplicationContext") private val resourceLoader: ResourceLoader,
-    private val videoService: VideoService,
-    private val gridFsTemplate: GridFsTemplate,
+    private val reactiveGridFsTemplate: ReactiveGridFsTemplate,
+    private val gridFsOperations: ReactiveGridFsOperations,
 ) {
-    fun getVideo(title: String?): Mono<Resource> =
+    fun getSampleVideo(title: String?): Mono<Resource> =
         Mono.fromSupplier {
             resourceLoader.getResource(String.format(FORMAT, title))
         }
 
-    fun getVideo2(title: String): Mono<Resource> =
-        videoService.findVideoByTitleLike(title).flatMap { gridFSFile ->
-            val contentType = gridFSFile.metadata?.getString("contentType") ?: MediaType.APPLICATION_OCTET_STREAM_VALUE
+    fun getMongoVideo(title: String): Mono<Resource> {
+        val query = Query(where("metadata.title").regex(".*$title.*", "i")).limit(1)
 
-            val videoStream = videoService.streamVideo(gridFSFile)
-            val inputStream = dataBufferToInputStream(videoStream)
+        return reactiveGridFsTemplate
+            .findOne(query)
+            .flatMap { gridFSFile ->
+                reactiveGridFsTemplate.getResource(gridFSFile)
+            }.flatMap { gridFsResource ->
+                DataBufferUtils
+                    .join(gridFsResource.content)
+                    .map { dataBuffer ->
+                        val bytes = ByteArray(dataBuffer.readableByteCount())
+                        dataBuffer.read(bytes)
+                        DataBufferUtils.release(dataBuffer)
+                        bytes
+                    }.map { bytes ->
+                        object : ByteArrayResource(bytes) {
+                            override fun getFilename(): String = gridFsResource.filename ?: title
+                        } as Resource
+                    }
+            }.switchIfEmpty(Mono.error(NoSuchElementException("Video not found: $title")))
+    }
 
-            Mono.just(InputStreamResource(inputStream)).map { resource ->
-                resource.apply {
-                    gridFSFile.filename
+    fun streamVideo(gridFSFile: GridFSFile): Mono<Resource> =
+        reactiveGridFsTemplate
+            .getResource(gridFSFile)
+            .flatMap { gridFsResource ->
+                gridFsResource.inputStream.map { inputStream ->
+                    object : InputStreamResource(inputStream) {
+                        override fun getFilename(): String = gridFSFile.filename
+                    }
                 }
             }
-        }
 
     private fun dataBufferToInputStream(dataBufferFlux: Flux<DataBuffer>): InputStream {
         val byteArrayOutputStream = ByteArrayOutputStream()
 
-        dataBufferFlux.subscribe { dataBuffer ->
-            val buffer = ByteArray(dataBuffer.readableByteCount())
-            dataBuffer.read(buffer)
-            byteArrayOutputStream.write(buffer)
-            DataBufferUtils.release(dataBuffer)
-        }
-
-        return ByteArrayInputStream(byteArrayOutputStream.toByteArray())
+        return dataBufferFlux
+            .collectList()
+            .map { dataBuffers ->
+                dataBuffers.forEach { dataBuffer ->
+                    val buffer = ByteArray(dataBuffer.readableByteCount())
+                    dataBuffer.read(buffer)
+                    byteArrayOutputStream.write(buffer)
+                    DataBufferUtils.release(dataBuffer)
+                }
+                ByteArrayInputStream(byteArrayOutputStream.toByteArray())
+            }.block()!!
     }
 
     companion object {
