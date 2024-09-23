@@ -1,6 +1,6 @@
 package kr.co.promptech.webfluxdemo.handlers
 
-import kr.co.promptech.webfluxdemo.StreamingService
+import kr.co.promptech.webfluxdemo.services.StreamingService
 import org.springframework.core.io.Resource
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component

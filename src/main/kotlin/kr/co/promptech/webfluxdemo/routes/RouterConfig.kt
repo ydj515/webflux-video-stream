@@ -1,4 +1,4 @@
-package kr.co.promptech.webfluxdemo
+package kr.co.promptech.webfluxdemo.routes
 
 import kr.co.promptech.webfluxdemo.handlers.VideoHandler
 import org.springframework.context.annotation.Bean
@@ -9,7 +9,7 @@ import org.springframework.web.reactive.function.server.ServerRequest
 import org.springframework.web.reactive.function.server.ServerResponse
 
 @Configuration
-class FunctionalEndPointConfig(
+class RouterConfig(
     private val videoHandler: VideoHandler,
 ) {
     @Bean
