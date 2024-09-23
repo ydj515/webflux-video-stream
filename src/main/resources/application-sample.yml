@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: webflux-demo
+  profiles:
+    default: local
+
+  server:
+    port: 8080
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  data:
+    mongodb:
+      uri: ${MONGODB}
